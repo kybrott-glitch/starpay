@@ -1,7 +1,6 @@
 import sqlite3
 import os
 import uuid
-from datetime import datetime
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "stars_bot.db")
 
@@ -20,6 +19,7 @@ class Database:
                 amount      INTEGER NOT NULL,
                 label       TEXT NOT NULL,
                 message     TEXT,
+                invoice_url TEXT,
                 active      INTEGER DEFAULT 1,
                 created_at  TEXT DEFAULT (datetime('now'))
             );
@@ -34,7 +34,12 @@ class Database:
                 FOREIGN KEY (link_id) REFERENCES links(id)
             );
         """)
-        self.conn.commit()
+        # Add invoice_url column if upgrading from old DB
+        try:
+            self.conn.execute("ALTER TABLE links ADD COLUMN invoice_url TEXT")
+            self.conn.commit()
+        except Exception:
+            pass
 
     def create_link(self, admin_id: int, amount: int, label: str) -> str:
         link_id = str(uuid.uuid4())[:8].upper()
@@ -44,6 +49,13 @@ class Database:
         )
         self.conn.commit()
         return link_id
+
+    def save_invoice_url(self, link_id: str, url: str):
+        self.conn.execute(
+            "UPDATE links SET invoice_url = ? WHERE id = ?",
+            (url, link_id)
+        )
+        self.conn.commit()
 
     def get_link(self, link_id: str):
         row = self.conn.execute(
