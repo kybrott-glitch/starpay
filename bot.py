@@ -189,6 +189,7 @@ async def pay(update: Update, context: ContextTypes.DEFAULT_TYPE):
         title=link["label"],
         description=f"Payment of {link['amount']} ⭐ Stars",
         payload=json.dumps({"link_id": link_id, "admin_id": link["admin_id"]}),
+        provider_token="",
         currency="XTR",
         prices=[LabeledPrice(label=link["label"], amount=link["amount"])],
     )
