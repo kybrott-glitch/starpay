@@ -1,13 +1,12 @@
 import logging
 import json
 import os
-from telegram import Update, LabeledPrice, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, LabeledPrice
 from telegram.ext import (
     Application,
     CommandHandler,
     MessageHandler,
     PreCheckoutQueryHandler,
-    CallbackQueryHandler,
     ContextTypes,
     filters,
 )
@@ -29,25 +28,24 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if is_admin:
         text = (
-            f"👑 *Admin Panel — Stars Bot*\n\n"
-            f"Commands:\n"
-            f"• /createlink `<stars> <label>` — create a payment link\n"
-            f"• /setmessage `<link_id> <message>` — set custom reply message\n"
-            f"• /links — list all your active links\n"
-            f"• /deletelink `<link_id>` — delete a link\n"
-            f"• /stats — view payment stats\n\n"
-            f"_Example:_\n"
-            f"`/createlink 50 VIP Access`\n"
-            f"`/setmessage 1 Thanks! Here's your invite: t.me/+xxxx`"
+            "👑 *Admin Panel — Stars Bot*\n\n"
+            "Commands:\n"
+            "• `/createlink <stars> <label>` — generate a shareable payment link\n"
+            "• `/setmessage <link\\_id> <message>` — set custom reply after payment\n"
+            "• `/links` — list all your active links\n"
+            "• `/deletelink <link\\_id>` — delete a link\n"
+            "• `/stats` — view payment stats\n\n"
+            "_Example:_\n"
+            "`/createlink 50 VIP Access`\n"
+            "`/setmessage ABC123 Thanks\\! Here's your invite: t.me/+xxxx`"
         )
     else:
         text = (
             f"⭐ *Stars Payment Bot*\n\n"
-            f"Hi {user.first_name}! Send /pay `<link_id>` to make a payment.\n\n"
-            f"_Ask the admin for the link ID._"
+            f"Hi {user.first_name}\\! Use the payment link shared by the admin to pay."
         )
 
-    await update.message.reply_text(text, parse_mode="Markdown")
+    await update.message.reply_text(text, parse_mode="MarkdownV2")
 
 
 async def create_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -71,17 +69,37 @@ async def create_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await update.message.reply_text("❌ Stars amount must be a positive integer.")
 
     label = " ".join(args[1:])
+
+    # First create DB entry to get link_id
     link_id = db.create_link(admin_id=user.id, amount=amount, label=label)
 
+    # Generate the real Telegram invoice link
+    try:
+        invoice_url = await context.bot.create_invoice_link(
+            title=label,
+            description=f"{amount} ⭐ Stars — {label}",
+            payload=json.dumps({"link_id": link_id, "admin_id": user.id}),
+            provider_token="",
+            currency="XTR",
+            prices=[LabeledPrice(label=label, amount=amount)],
+        )
+    except Exception as e:
+        db.delete_link(link_id=link_id, admin_id=user.id)
+        logger.error(f"Failed to create invoice link: {e}")
+        return await update.message.reply_text(f"❌ Failed to generate link: {e}")
+
+    # Save the generated URL to DB
+    db.save_invoice_url(link_id=link_id, url=invoice_url)
+
     await update.message.reply_text(
-        f"✅ *Payment link created!*\n\n"
-        f"🆔 Link ID: `{link_id}`\n"
+        f"✅ *Payment link created\\!*\n\n"
+        f"🆔 ID: `{link_id}`\n"
         f"⭐ Stars: `{amount}`\n"
         f"🏷 Label: `{label}`\n\n"
-        f"Share with users: they run `/pay {link_id}`\n\n"
-        f"Set a custom reply message:\n"
+        f"🔗 *Share this link:*\n{invoice_url}\n\n"
+        f"_Set a custom reply message:_\n"
         f"`/setmessage {link_id} Your message here`",
-        parse_mode="Markdown"
+        parse_mode="MarkdownV2"
     )
 
 
@@ -94,7 +112,7 @@ async def set_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     args = context.args
     if len(args) < 2:
         return await update.message.reply_text(
-            "Usage: `/setmessage <link_id> <message>`\nExample: `/setmessage 1 Thanks! Here's your invite link: t.me/+xxx`",
+            "Usage: `/setmessage <link_id> <message>`",
             parse_mode="Markdown"
         )
 
@@ -104,7 +122,7 @@ async def set_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     success = db.set_custom_message(link_id=link_id, admin_id=user.id, message=message)
     if success:
         await update.message.reply_text(
-            f"✅ Custom message set for link `{link_id}`:\n\n_{message}_",
+            f"✅ Custom message set for link `{link_id}`:\n\n{message}",
             parse_mode="Markdown"
         )
     else:
@@ -123,9 +141,14 @@ async def list_links(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     text = "📋 *Your Payment Links*\n\n"
     for link in links:
-        msg_preview = (link["message"][:30] + "...") if link["message"] and len(link["message"]) > 30 else (link["message"] or "_(not set)_")
+        msg_preview = (
+            (link["message"][:35] + "...") if link["message"] and len(link["message"]) > 35
+            else (link["message"] or "_(not set)_")
+        )
+        url = link.get("invoice_url") or "_(generating...)_"
         text += (
             f"🆔 `{link['id']}` — ⭐ {link['amount']} — {link['label']}\n"
+            f"   🔗 {url}\n"
             f"   💬 Reply: {msg_preview}\n"
             f"   💰 Paid: {link['payment_count']} time(s)\n\n"
         )
@@ -167,50 +190,25 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-# ─── USER COMMANDS ────────────────────────────────────────────────────────────
-
-async def pay(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """/pay <link_id>"""
-    if not context.args:
-        return await update.message.reply_text(
-            "Usage: `/pay <link_id>`\nAsk the admin for the link ID.",
-            parse_mode="Markdown"
-        )
-
-    link_id = context.args[0]
-    link = db.get_link(link_id)
-
-    if not link:
-        return await update.message.reply_text("❌ Invalid link ID. Please check with the admin.")
-
-    # Send invoice (Stars = XTR currency)
-    await context.bot.send_invoice(
-        chat_id=update.effective_chat.id,
-        title=link["label"],
-        description=f"Payment of {link['amount']} ⭐ Stars",
-        payload=json.dumps({"link_id": link_id, "admin_id": link["admin_id"]}),
-        provider_token="",
-        currency="XTR",
-        prices=[LabeledPrice(label=link["label"], amount=link["amount"])],
-    )
-
-
 # ─── PAYMENT HANDLERS ─────────────────────────────────────────────────────────
 
 async def pre_checkout(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Always approve pre-checkout for Stars."""
-    query = update.pre_checkout_query
-    await query.answer(ok=True)
+    await update.pre_checkout_query.answer(ok=True)
 
 
 async def successful_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle confirmed Stars payment."""
     payment = update.message.successful_payment
-    payload = json.loads(payment.invoice_payload)
-
-    link_id = payload["link_id"]
-    admin_id = payload["admin_id"]
     buyer = update.effective_user
+
+    try:
+        payload = json.loads(payment.invoice_payload)
+        link_id = payload["link_id"]
+        admin_id = payload["admin_id"]
+    except Exception:
+        await update.message.reply_text("✅ Payment received! Thank you! ⭐")
+        return
 
     # Record payment
     db.record_payment(
@@ -220,29 +218,27 @@ async def successful_payment(update: Update, context: ContextTypes.DEFAULT_TYPE)
         stars=payment.total_amount,
     )
 
-    # Get custom message
+    # Send custom message to buyer
     link = db.get_link(link_id)
     custom_msg = link["message"] if link and link["message"] else None
 
-    if custom_msg:
-        await update.message.reply_text(custom_msg)
-    else:
-        await update.message.reply_text(
-            f"✅ Payment received! Thank you, {buyer.first_name}! ⭐"
-        )
+    await update.message.reply_text(
+        custom_msg if custom_msg else f"✅ Payment received! Thank you, {buyer.first_name}! ⭐"
+    )
 
     # Notify admin
     try:
         await context.bot.send_message(
             chat_id=admin_id,
             text=(
-                f"💰 *New Payment Received!*\n\n"
+                f"💰 *New Payment Received\\!*\n\n"
                 f"👤 User: [{buyer.first_name}](tg://user?id={buyer.id})"
-                + (f" (@{buyer.username})" if buyer.username else "") + "\n"
-                f"🆔 Link: `{link_id}` — {link['label'] if link else ''}\n"
+                + (f" \\(@{buyer.username}\\)" if buyer.username else "") + "\n"
+                f"🆔 Link: `{link_id}`"
+                + (f" — {link['label']}" if link else "") + "\n"
                 f"⭐ Stars: `{payment.total_amount}`"
             ),
-            parse_mode="Markdown"
+            parse_mode="MarkdownV2"
         )
     except Exception as e:
         logger.warning(f"Could not notify admin {admin_id}: {e}")
@@ -253,7 +249,6 @@ async def successful_payment(update: Update, context: ContextTypes.DEFAULT_TYPE)
 def main():
     app = Application.builder().token(BOT_TOKEN).build()
 
-    # Admin commands
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("createlink", create_link))
     app.add_handler(CommandHandler("setmessage", set_message))
@@ -261,10 +256,6 @@ def main():
     app.add_handler(CommandHandler("deletelink", delete_link))
     app.add_handler(CommandHandler("stats", stats))
 
-    # User commands
-    app.add_handler(CommandHandler("pay", pay))
-
-    # Payment handlers
     app.add_handler(PreCheckoutQueryHandler(pre_checkout))
     app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment))
 
