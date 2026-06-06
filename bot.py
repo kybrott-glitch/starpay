@@ -37,15 +37,15 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "• `/stats` — view payment stats\n\n"
             "_Example:_\n"
             "`/createlink 50 VIP Access`\n"
-            "`/setmessage ABC123 Thanks\\! Here's your invite: t.me/+xxxx`"
+            "`/setmessage ABC123 Thanks! Here's your invite: t.me/+xxxx`"
         )
     else:
         text = (
             f"⭐ *Stars Payment Bot*\n\n"
-            f"Hi {user.first_name}\\! Use the payment link shared by the admin to pay."
+            f"Hi {user.first_name}! Use the payment link shared by the admin to pay."
         )
 
-    await update.message.reply_text(text, parse_mode="MarkdownV2")
+    await update.message.reply_text(text, parse_mode="Markdown")
 
 
 async def create_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -92,14 +92,14 @@ async def create_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
     db.save_invoice_url(link_id=link_id, url=invoice_url)
 
     await update.message.reply_text(
-        f"✅ *Payment link created\\!*\n\n"
-        f"🆔 ID: `{link_id}`\n"
-        f"⭐ Stars: `{amount}`\n"
-        f"🏷 Label: `{label}`\n\n"
-        f"🔗 *Share this link:*\n{invoice_url}\n\n"
-        f"_Set a custom reply message:_\n"
-        f"`/setmessage {link_id} Your message here`",
-        parse_mode="MarkdownV2"
+        f"✅ Payment link created!\n\n"
+        f"🆔 ID: {link_id}\n"
+        f"⭐ Stars: {amount}\n"
+        f"🏷 Label: {label}\n\n"
+        f"🔗 Share this link:\n{invoice_url}\n\n"
+        f"Set a custom reply message:\n"
+        f"/setmessage {link_id} Your message here",
+        parse_mode=None
     )
 
 
@@ -231,14 +231,14 @@ async def successful_payment(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await context.bot.send_message(
             chat_id=admin_id,
             text=(
-                f"💰 *New Payment Received\\!*\n\n"
+                f"💰 *New Payment Received!*\n\n"
                 f"👤 User: [{buyer.first_name}](tg://user?id={buyer.id})"
-                + (f" \\(@{buyer.username}\\)" if buyer.username else "") + "\n"
+                + (f" (@{buyer.username})" if buyer.username else "") + "\n"
                 f"🆔 Link: `{link_id}`"
                 + (f" — {link['label']}" if link else "") + "\n"
                 f"⭐ Stars: `{payment.total_amount}`"
             ),
-            parse_mode="MarkdownV2"
+            parse_mode="Markdown"
         )
     except Exception as e:
         logger.warning(f"Could not notify admin {admin_id}: {e}")
